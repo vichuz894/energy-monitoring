@@ -182,6 +182,9 @@ with tab1:
             height=380, hovermode='x unified',
             legend=dict(orientation='h', yanchor='bottom', y=1.02)
         )
+        import numpy as nps
+        ys = np.concatenate([np.asarray(t.y, dtype=float) for t in fig.data if t.y is not None and len(t.y) > 0])
+        fig.update_yaxes(range=[0, np.nanquantile(ys, 0.99) * 1.5])
         st.plotly_chart(fig, use_container_width=True)
 
 # ---------------------------------------------------------------------------
