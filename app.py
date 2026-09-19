@@ -138,8 +138,8 @@ st.caption(
     "raw values."
 )
 
-tab1, tab2, tab3 = st.tabs(
-    ["📈 Time Series", "📋 Anomaly Table", "🔍 Drill-Down / Evidence"]
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["📈 Time Series", "📋 Anomaly Table", "🔍 Drill-Down / Evidence", "🗂️ Anomaly Categories"]
 )
 
 # ---------------------------------------------------------------------------
@@ -182,9 +182,6 @@ with tab1:
             height=380, hovermode='x unified',
             legend=dict(orientation='h', yanchor='bottom', y=1.02)
         )
-        import numpy as nps
-        ys = np.concatenate([np.asarray(t.y, dtype=float) for t in fig.data if t.y is not None and len(t.y) > 0])
-        fig.update_yaxes(range=[0, np.nanquantile(ys, 0.99) * 1.5])
         st.plotly_chart(fig, use_container_width=True)
 
 # ---------------------------------------------------------------------------
@@ -313,3 +310,103 @@ with tab3:
                 "before prioritizing investigation."
             )
         )
+
+# ---------------------------------------------------------------------------
+# TAB 4: ANOMALY CATEGORIES - direction, persistence, multi-unit, severity
+# ---------------------------------------------------------------------------
+
+with tab4:
+    st.subheader("How the flagged anomalies break down")
+
+    if anomalies.empty:
+        st.info("No anomalies match the current filters.")
+    else:
+        n = len(anomalies)
+
+        # --- Direction: over vs under consumption ---
+        over = anomalies[anomalies['residual'] > 0]
+        under = anomalies[anomalies['residual'] < 0]
+
+        # --- Persistence ---
+        persistent = anomalies[anomalies['persistent_anomaly']]
+        isolated = anomalies[~anomalies['persistent_anomaly']]
+
+        # --- Multi-unit simultaneous anomalies (within full df, not just filtered,
+        #     so cross-equipment timing isn't cut by the equipment filter) ---
+        base_anom = df[df['is_anomaly']]
+        simul = base_anom.groupby('timestamp')['equipment_id'].nunique()
+        multi_unit_count = int((simul >= 2).sum())
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("### By direction")
+            st.markdown(
+                f"- **Over-consumption** (more energy than expected): "
+                f"**{len(over)}** ({100*len(over)/n:.1f}%)\n"
+                f"- **Under-consumption** (less energy than expected): "
+                f"**{len(under)}** ({100*len(under)/n:.1f}%)"
+            )
+            fig_dir = px.pie(
+                names=['Over-consumption', 'Under-consumption'],
+                values=[len(over), len(under)],
+                color_discrete_sequence=['#d62728', '#1f77b4'],
+            )
+            fig_dir.update_layout(height=280, margin=dict(t=10, b=10))
+            st.plotly_chart(fig_dir, use_container_width=True)
+
+        with col2:
+            st.markdown("### By persistence")
+            st.markdown(
+                f"- **Persistent** (sustained, 3+ of last 4 readings): "
+                f"**{len(persistent)}** ({100*len(persistent)/n:.1f}%)\n"
+                f"- **Isolated** (one-off): "
+                f"**{len(isolated)}** ({100*len(isolated)/n:.1f}%)"
+            )
+            fig_pers = px.pie(
+                names=['Persistent', 'Isolated'],
+                values=[len(persistent), len(isolated)],
+                color_discrete_sequence=['#ff7f0e', '#7f7f7f'],
+            )
+            fig_pers.update_layout(height=280, margin=dict(t=10, b=10))
+            st.plotly_chart(fig_pers, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("### Severity × Direction")
+        st.caption(
+            "Shows whether the most extreme anomalies skew toward "
+            "over- or under-consumption."
+        )
+        anomalies_dir = anomalies.copy()
+        anomalies_dir['direction'] = anomalies_dir['residual'].apply(
+            lambda x: 'Over-consumption' if x > 0 else 'Under-consumption'
+        )
+        cross = pd.crosstab(anomalies_dir['severity'], anomalies_dir['direction'])
+        cross = cross.reindex(['High', 'Medium', 'Low'])
+        fig_cross = px.bar(
+            cross, barmode='group',
+            color_discrete_sequence=['#d62728', '#1f77b4'],
+        )
+        fig_cross.update_layout(height=320, xaxis_title="Severity", yaxis_title="Count")
+        st.plotly_chart(fig_cross, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("### Multi-unit simultaneous anomalies")
+        st.markdown(
+            f"**{multi_unit_count}** timestamps had 2 or more chillers "
+            f"flagged as anomalous at the same time (computed across all "
+            f"equipment, independent of the current equipment filter). "
+            f"This distinguishes plant-wide events (shared cause, e.g. a "
+            f"common cooling-water loop issue) from single-unit faults."
+        )
+
+        st.markdown("---")
+        st.markdown("### Per-equipment anomaly counts")
+        eq_counts = anomalies['equipment_id'].value_counts().sort_index()
+        fig_eq = px.bar(
+            x=eq_counts.index, y=eq_counts.values,
+            labels={'x': 'Equipment', 'y': 'Anomaly count'},
+            color_discrete_sequence=['#2ca02c'],
+        )
+        fig_eq.update_layout(height=280)
+        st.plotly_chart(fig_eq, use_container_width=True)
