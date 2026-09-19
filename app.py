@@ -20,6 +20,7 @@ from pipeline import (
     compute_residuals,
     score_anomalies,
     add_persistence_flag,
+    add_anomaly_type,
     REGRESSOR_FEATURES,
 )
 
@@ -47,6 +48,7 @@ def run_full_pipeline(file_bytes: bytes):
     df = compute_residuals(df, models)
     df = score_anomalies(df)
     df = add_persistence_flag(df)
+    df = add_anomaly_type(df)
 
     model_diagnostics = {
         eq_id: {'train_r2': m['train_r2'], 'val_r2': m['val_r2'],
@@ -195,17 +197,20 @@ with tab2:
         st.info("No anomalies match the current filters.")
     else:
         display_cols = [
-            'timestamp', 'equipment_id', 'severity', 'persistent_anomaly',
+            'timestamp', 'equipment_id', 'anomaly_type', 'severity',
+            'persistent_anomaly', 'is_multi_unit_event',
             'Building Load (RT)', 'Chiller Energy Consumption (kWh)',
             'predicted_energy_kwh', 'residual', 'residual_pct', 'anomaly_score'
         ]
         table = anomalies[display_cols].sort_values('anomaly_score', ascending=False).copy()
         table = table.rename(columns={
+            'anomaly_type': 'Anomaly Type',
             'predicted_energy_kwh': 'Expected Energy (kWh)',
             'residual': 'Residual (kWh)',
             'residual_pct': 'Residual (%)',
             'anomaly_score': 'Anomaly Score',
             'persistent_anomaly': 'Persistent',
+            'is_multi_unit_event': 'Multi-Unit Event',
         })
         for col in ['Building Load (RT)', 'Chiller Energy Consumption (kWh)',
                     'Expected Energy (kWh)', 'Residual (kWh)']:
@@ -245,8 +250,11 @@ with tab3:
 
         with colA:
             st.markdown(f"### {eq_id} at {ts}")
+            st.markdown(f"**Type:** {row['anomaly_type']}")
             st.markdown(f"**Severity:** {row['severity']} &nbsp;|&nbsp; "
-                        f"**Persistent:** {'Yes' if row['persistent_anomaly'] else 'No'}")
+                        f"**Persistent:** {'Yes' if row['persistent_anomaly'] else 'No'} "
+                        f"&nbsp;|&nbsp; **Multi-Unit Event:** "
+                        f"{'Yes' if row['is_multi_unit_event'] else 'No'}")
             st.markdown(
                 f"- Actual energy: **{row['Chiller Energy Consumption (kWh)']:.1f} kWh**\n"
                 f"- Expected energy (given load/weather): **{row['predicted_energy_kwh']:.1f} kWh**\n"
@@ -410,3 +418,20 @@ with tab4:
         )
         fig_eq.update_layout(height=280)
         st.plotly_chart(fig_eq, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("### Anomaly types")
+        st.caption(
+            "Behavioural labels derived from severity, persistence, and "
+            "direction of deviation. These describe the *pattern* observed, "
+            "not a diagnosed physical fault \u2014 the dataset provides no "
+            "fault ground truth (Data Specification Sec. 9)."
+        )
+        type_counts = anomalies['anomaly_type'].value_counts()
+        fig_type = px.bar(
+            x=type_counts.values, y=type_counts.index, orientation='h',
+            labels={'x': 'Count', 'y': ''},
+            color_discrete_sequence=['#9467bd'],
+        )
+        fig_type.update_layout(height=320, yaxis=dict(autorange='reversed'))
+        st.plotly_chart(fig_type, use_container_width=True)
